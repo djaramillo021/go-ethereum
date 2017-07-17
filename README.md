@@ -11,6 +11,10 @@ Depends used
  go get -u golang.org/x/crypto/sha3
 
 
+Version update
+
+git checkout tags/v1.6.7 -b release/1.6
+
 ----------------------------------------------------------------
 
 Official golang implementation of the Ethereum protocol.
