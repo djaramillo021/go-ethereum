@@ -5,7 +5,9 @@ This version is now beta, the main idea is to integrate google cloud datastore ,
 Depends used
 
  go get -u cloud.google.com/go/datastore
+ 
  go get -u cloud.google.com/go/storage
+ 
  go get -u golang.org/x/crypto/sha3
 
 
