@@ -17,10 +17,13 @@
 package ethdb
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"io/ioutil"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -31,13 +34,35 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	gometrics "github.com/rcrowley/go-metrics"
+	// Imports the Google Cloud Datastore client package.
+	googleDataStore "cloud.google.com/go/datastore"
+	googleStore "cloud.google.com/go/storage"
+	sha3 "golang.org/x/crypto/sha3"
+	// googleIterator "google.golang.org/api/iterator"
+	b64 "encoding/base64"
+	"encoding/hex"
 )
+
+type KeyValueBlockchain struct {
+	KeyBlokchain []byte
+	DataGCS      string
+	//Base64       string
+}
 
 var OpenFileLimit = 64
 
 type LDBDatabase struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
+
+	//DJ
+	ctx       context.Context //context google
+	projectID string
+	kindGCD   string
+	bucketGCD string
+	clientGCD *googleDataStore.Client
+	clientGCS *googleStore.Client
+	//DJ termino
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
 	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
@@ -82,10 +107,78 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	//DJ
+	ctx := context.Background()
+
+	// Set your Google Cloud Platform project ID.
+	projectID := "geth2-173819"
+	kindGCD := "BlockchainEthereum"
+	bucketGCD := "raw-blockchain"
+
+	var clientGCD *googleDataStore.Client
+	var errGCD error
+	var clientGCS *googleStore.Client
+	var errGCS error
+	clientGCD = nil
+	errGCD = nil
+	clientGCS = nil
+	errGCS = nil
+
+	clientGCD, errGCD = googleDataStore.NewClient(ctx, projectID)
+
+	if errGCD != nil {
+		logger.Error("Failed to create client Google DataStore: %v", errGCD)
+		logger.Error("so, can not create Google Storage")
+		clientGCD = nil
+
+	}
+
+	if clientGCD != nil {
+		clientGCS, errGCS = googleStore.NewClient(ctx)
+		if errGCS != nil {
+			logger.Error("Failed to create client Google Storage: %v", errGCS)
+			errGCDClose := clientGCD.Close()
+			if errGCDClose == nil {
+				logger.Error("ClientGCD closed")
+			} else {
+				logger.Error("Failed to close ClientGCD", "err", errGCDClose)
+			}
+			clientGCD = nil
+			clientGCS = nil
+		}
+	}
+
+	if clientGCD == nil || clientGCS == nil {
+		errDb := db.Close()
+		if err == nil {
+			logger.Error("Database closed")
+		} else {
+			logger.Error("Failed to close database", "err", errDb)
+			return nil, errDb
+		}
+	}
+
+	if clientGCD == nil {
+		return nil, errGCD
+	}
+
+	if clientGCS == nil {
+		return nil, errGCS
+	}
+	//DJ
 	return &LDBDatabase{
 		fn:  file,
 		db:  db,
 		log: logger,
+		//DJ
+		ctx:       ctx,
+		projectID: projectID,
+		kindGCD:   kindGCD,
+		bucketGCD: bucketGCD,
+		clientGCD: clientGCD,
+		clientGCS: clientGCS,
+		//DJ
 	}, nil
 }
 
@@ -96,6 +189,7 @@ func (db *LDBDatabase) Path() string {
 
 // Put puts the given key / value to the queue
 func (db *LDBDatabase) Put(key []byte, value []byte) error {
+
 	// Measure the database put latency, if requested
 	if db.putTimer != nil {
 		defer db.putTimer.UpdateSince(time.Now())
@@ -106,7 +200,89 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 	if db.writeMeter != nil {
 		db.writeMeter.Mark(int64(len(value)))
 	}
-	return db.db.Put(key, value, nil)
+
+	//DJ
+
+	// Creates a BlockchainEthereumData instance.
+
+	idElementFile := int64(time.Now().Unix())
+	h := sha3.New224()
+	h.Write(value)
+	nameElementFile := hex.EncodeToString(h.Sum(nil))
+	nameElementFile = strconv.FormatInt(idElementFile, 10) + nameElementFile[0:len(nameElementFile)/2] // sha3_hash
+
+	//part GCS
+
+	// Creates a Bucket instance.
+	bucketGCS := db.clientGCS.Bucket(db.bucketGCD)
+	objGCS := bucketGCS.Object(nameElementFile)
+	wGCS := objGCS.NewWriter(db.ctx)
+
+	if _, err := wGCS.Write(value); err != nil {
+		db.log.Error("Failed to save file to put levelDB clientGCS: %v bucket: %v , nameFile: %v", err, db.bucketGCD, nameElementFile)
+
+		if errClose := wGCS.Close(); errClose != nil {
+			db.log.Error("Failed to close file to put levelDB clientGCS: %v bucket: %v , nameFile: %v", errClose, db.bucketGCD, nameElementFile)
+			return errClose
+
+		}
+
+		return err
+
+	}
+
+	// Close, just like writing a file.
+	if err := wGCS.Close(); err != nil {
+		db.log.Error("Failed to close file to put levelDB clientGCS: %v bucket: %v , nameFile: %v", err, db.bucketGCD, nameElementFile)
+		return err
+
+	}
+
+	blockchainEthereumData := KeyValueBlockchain{
+		KeyBlokchain: key,
+		DataGCS:      nameElementFile,
+	}
+
+	nameElement := b64.StdEncoding.EncodeToString(key)
+	blockchainEthereumKeyNew := googleDataStore.NameKey(db.kindGCD, nameElement, nil)
+	isUpdate := true
+	kvRestoreBlockchain := &KeyValueBlockchain{}
+	if errRestore := db.clientGCD.Get(db.ctx, blockchainEthereumKeyNew, kvRestoreBlockchain); errRestore != nil {
+		if errRestore == googleDataStore.ErrNoSuchEntity {
+			isUpdate = false
+		} else {
+			db.log.Error("Failed init rollback to put levelDB clientGCD: %v", errRestore)
+			return errRestore
+		}
+
+	}
+
+	if _, err := db.clientGCD.Put(db.ctx, blockchainEthereumKeyNew, &blockchainEthereumData); err != nil {
+		db.log.Error("Failed to save to put levelDB clientGCD: %v , keyGCD: %v ,keyGCS: %v", err, nameElement, nameElementFile)
+		return err
+	}
+
+	errDB := db.db.Put(key, value, nil)
+	if errDB != nil /* || db.clientGCD == nil*/ {
+		if isUpdate {
+			if _, err := db.clientGCD.Put(db.ctx, blockchainEthereumKeyNew, &kvRestoreBlockchain); err != nil {
+				db.log.Error("Failed to rollbackPut to put levelDB  clientGCD: %v , keyGCD: %v ,keyGCS: %v", err, nameElement, kvRestoreBlockchain.DataGCS)
+				return err
+			}
+
+		} else {
+			//delete service
+			if errDelete := db.clientGCD.Delete(db.ctx, blockchainEthereumKeyNew); errDelete != nil {
+				db.log.Error("Failed to rollbackDelete to put levelDB  clientGCD : %v , keyGCD: %v", errDelete, nameElement)
+				return errDelete
+			}
+		}
+
+		db.log.Error("Failed to put levelDB: %v , key: %v ", errDB, key)
+		return errDB
+	}
+	//DJ termino
+	return errDB
 }
 
 // Get returns the given key if it's present.
@@ -115,7 +291,48 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	if db.getTimer != nil {
 		defer db.getTimer.UpdateSince(time.Now())
 	}
+
+	//DJ
+
+	nameElement := b64.StdEncoding.EncodeToString(key)
+	blockchainEthereumKeyGet := googleDataStore.NameKey(db.kindGCD, nameElement, nil)
+	kvBlockchain := &KeyValueBlockchain{}
+	if errGet := db.clientGCD.Get(db.ctx, blockchainEthereumKeyGet, kvBlockchain); errGet != nil {
+
+		db.log.Error("Failed to get levelDB clientGCD: %v", errGet)
+		return nil, errGet
+	}
+
+	// Creates a Bucket instance.
+	bucketGCS := db.clientGCS.Bucket(db.bucketGCD)
+	objGCS := bucketGCS.Object(kvBlockchain.DataGCS)
+	rGCS, errReadGCS := objGCS.NewReader(db.ctx)
+	if errReadGCS != nil {
+
+		db.log.Error("Failed to get levelDB clientGCS[read]: %v nameFile: %v", errReadGCS, kvBlockchain.DataGCS)
+		return nil, errReadGCS
+	}
+
+	byteGCS, errReadFileGCS := ioutil.ReadAll(rGCS)
+	if errReadFileGCS != nil {
+		db.log.Error("Failed to get levelDB clientGCS[readFile]: %v nameFile: %v", errReadFileGCS, kvBlockchain.DataGCS)
+		if errReadCloseGCS := rGCS.Close(); errReadCloseGCS != nil {
+
+			db.log.Error("Failed to get levelDB clientGCS[close]: %v nameFile: %v", errReadCloseGCS, kvBlockchain.DataGCS)
+			return nil, errReadCloseGCS
+		}
+
+		return nil, errReadFileGCS
+	}
+
+	if errReadCloseGCS := rGCS.Close(); errReadCloseGCS != nil {
+
+		db.log.Error("Failed to get levelDB clientGCS[close]: %v nameFile: %v", errReadCloseGCS, kvBlockchain.DataGCS)
+		return nil, errReadCloseGCS
+	}
+
 	// Retrieve the key and increment the miss counter if not found
+
 	dat, err := db.db.Get(key, nil)
 	if err != nil {
 		if db.missMeter != nil {
@@ -123,22 +340,70 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 		}
 		return nil, err
 	}
+
+	hGCS := sha3.New224()
+	hGCS.Write(byteGCS)
+	sha3GCS := hex.EncodeToString(hGCS.Sum(nil))
+
+	hLevelDB := sha3.New224()
+	hLevelDB.Write(dat)
+	sha3LevelDB := hex.EncodeToString(hLevelDB.Sum(nil))
+
+	if strings.Compare(sha3LevelDB, sha3GCS) != 0 {
+
+		if db.missMeter != nil {
+			db.missMeter.Mark(1)
+		}
+		errorCompare := errors.New("difference between levelDB and GCS")
+		return nil, errorCompare
+	}
 	// Otherwise update the actually retrieved amount of data
 	if db.readMeter != nil {
 		db.readMeter.Mark(int64(len(dat)))
 	}
+
 	return dat, nil
 	//return rle.Decompress(dat)
 }
 
 // Delete deletes the key from the queue and database
 func (db *LDBDatabase) Delete(key []byte) error {
+
 	// Measure the database delete latency, if requested
 	if db.delTimer != nil {
 		defer db.delTimer.UpdateSince(time.Now())
 	}
 	// Execute the actual operation
-	return db.db.Delete(key, nil)
+
+	//DJ
+	nameElement := b64.StdEncoding.EncodeToString(key)
+	blockchainEthereumKeyDelete := googleDataStore.NameKey(db.kindGCD, nameElement, nil)
+
+	kvRestoreBlockchain := &KeyValueBlockchain{}
+	if errRestore := db.clientGCD.Get(db.ctx, blockchainEthereumKeyDelete, kvRestoreBlockchain); errRestore != nil {
+		db.log.Error("Failed init rollback to delete levelDB clientGCD: %v , keyGCD: %v", errRestore, nameElement)
+		return errRestore
+	}
+
+	//delete service
+	if errDelete := db.clientGCD.Delete(db.ctx, blockchainEthereumKeyDelete); errDelete != nil {
+		db.log.Error("Failed to delete levelDB clientGCD: %v , keyGCD: %v", errDelete, nameElement)
+		return errDelete
+	}
+
+	errDB := db.db.Delete(key, nil)
+	if errDB != nil /*|| db.clientGCD == nil*/ {
+		if _, errPut := db.clientGCD.Put(db.ctx, blockchainEthereumKeyDelete, &kvRestoreBlockchain); errPut != nil {
+			db.log.Error("Failed to rollbackPut to delete levelDB clientGCD: %v , keyGCD: %v ,keyGCS: %v", errPut, nameElement, kvRestoreBlockchain.DataGCS)
+			return errPut
+		}
+		db.log.Error("Failed to delete levelDB: %v ,key : %v", errDB, key)
+		return errDB
+	}
+
+	//DJ termino
+
+	return errDB
 }
 
 func (db *LDBDatabase) NewIterator() iterator.Iterator {
@@ -163,6 +428,24 @@ func (db *LDBDatabase) Close() {
 	} else {
 		db.log.Error("Failed to close database", "err", err)
 	}
+
+	//if db.clientGCD != nil {
+
+	errGCD := db.clientGCD.Close()
+	if errGCD == nil {
+		db.log.Info("ClientGCD closed")
+	} else {
+		db.log.Error("Failed to close ClientGCD", "err", errGCD)
+	}
+
+	errGCS := db.clientGCS.Close()
+	if errGCS == nil {
+		db.log.Info("clientGCS closed")
+	} else {
+		db.log.Error("Failed to close clientGCS", "err", errGCS)
+	}
+	//}
+
 }
 
 func (db *LDBDatabase) LDB() *leveldb.DB {

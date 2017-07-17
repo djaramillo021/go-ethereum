@@ -351,6 +351,7 @@ func (s *stateSync) process(req *stateReq) (bool, error) {
 
 	defer func(start time.Time) {
 		if processed+written+duplicate+unexpected > 0 {
+			//DJ
 			s.updateStats(processed, written, duplicate, unexpected, time.Since(start))
 		}
 	}(time.Now())

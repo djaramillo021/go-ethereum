@@ -34,7 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/rcrowley/go-metrics"
+	metrics "github.com/rcrowley/go-metrics"
 )
 
 var (
@@ -315,6 +315,8 @@ func (d *Downloader) UnregisterPeer(id string) error {
 // Synchronise tries to sync up our local block chain with a remote peer, both
 // adding various sanity checks as well as wrapping it with various log entries.
 func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode SyncMode) error {
+	//DJ part ommit all
+	/* */
 	err := d.synchronise(id, head, td, mode)
 	switch err {
 	case nil:
@@ -329,7 +331,10 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 	default:
 		log.Warn("Synchronisation failed, retrying", "err", err)
 	}
+
 	return err
+
+	//return nil
 }
 
 // synchronise will select the peer and use it for synchronising. If an empty string is given
@@ -1441,10 +1446,14 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 			blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 			receipts[i] = result.Receipts
 		}
+
+		//DJ  it is not necessary
+		/**/
 		if index, err := d.blockchain.InsertReceiptChain(blocks, receipts); err != nil {
 			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 			return errInvalidChain
 		}
+
 		// Shift the results to the next batch
 		results = results[items:]
 	}
