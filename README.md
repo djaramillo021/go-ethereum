@@ -11,9 +11,9 @@ Depends used
  go get -u golang.org/x/crypto/sha3
 
 
-Version update
+Version modified
 
-git checkout tags/v1.6.7 -b release/1.6
+git checkout  release/1.6
 
 ----------------------------------------------------------------
 
