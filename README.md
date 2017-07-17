@@ -1,5 +1,7 @@
-## Go Ethereum
-
+## Go Ethereum as Service[Beta]
+----------------------------------------------------------------
+This version is now beta, the main idea is to integrate google cloud datastore , google cloud storage and  levelDB. This idea was because levelDB is mono-process so, it is impossible to use multiple geth with an only resource of  levelBD(it is a limitation of levelBD). 
+-----------------------------------------------------------------------------------------------
 Official golang implementation of the Ethereum protocol.
 
 [![API Reference](
