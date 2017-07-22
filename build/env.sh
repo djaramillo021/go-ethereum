@@ -25,6 +25,10 @@ export GOPATH
 # Run the command inside the workspace.
 cd "$ethdir/go-ethereum"
 PWD="$ethdir/go-ethereum"
-
+set -x
+go get -u cloud.google.com/go/datastore
+go get -u cloud.google.com/go/storage
+go get -u golang.org/x/crypto/sha3
+set +x
 # Launch the arguments with the configured environment.
 exec "$@"
