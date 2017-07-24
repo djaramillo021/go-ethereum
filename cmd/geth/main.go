@@ -110,6 +110,11 @@ var (
 		utils.GpoPercentileFlag,
 		utils.ExtraDataFlag,
 		configFileFlag,
+
+		utils.ProjectIDFlag,
+		utils.IsServerFlag,
+		utils.BucketFlag,
+		utils.KindFlag,
 	}
 
 	rpcFlags = []cli.Flag{
@@ -131,6 +136,9 @@ var (
 		utils.WhisperMaxMessageSizeFlag,
 		utils.WhisperMinPOWFlag,
 	}
+	//DJ
+
+	//
 )
 
 func init() {
@@ -168,7 +176,9 @@ func init() {
 	app.Flags = append(app.Flags, consoleFlags...)
 	app.Flags = append(app.Flags, debug.Flags...)
 	app.Flags = append(app.Flags, whisperFlags...)
-
+	//DJ
+	//app.Flags = append(app.Flags, googleFlags...)
+	//DJ
 	app.Before = func(ctx *cli.Context) error {
 		runtime.GOMAXPROCS(runtime.NumCPU())
 		if err := debug.Setup(ctx); err != nil {
@@ -189,6 +199,7 @@ func init() {
 }
 
 func main() {
+
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

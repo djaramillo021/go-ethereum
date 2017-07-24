@@ -18,6 +18,7 @@ package ethdb
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,7 @@ type LDBDatabase struct {
 	bucketGCD string
 	clientGCD *googleDataStore.Client
 	clientGCS *googleStore.Client
+	isServer  bool
 	//DJ termino
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
@@ -81,8 +83,11 @@ type LDBDatabase struct {
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
-func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
+func NewLDBDatabase(file string, _isServer bool, _projectId string,
+	_kind string, _bucket string, cache int, handles int) (*LDBDatabase, error) {
 	logger := log.New("database", file)
+
+	fmt.Println("_bucket: " + _bucket)
 
 	// Ensure we have some minimal caching and file guarantees
 	if cache < 16 {
@@ -112,9 +117,9 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	ctx := context.Background()
 
 	// Set your Google Cloud Platform project ID.
-	projectID := "geth2-173819"
-	kindGCD := "BlockchainEthereum"
-	bucketGCD := "raw-blockchain"
+	projectID := _projectId //"geth2-173819"
+	kindGCD := _kind        //"BlockchainEthereum"
+	bucketGCD := _bucket    //"raw-blockchain"
 
 	var clientGCD *googleDataStore.Client
 	var errGCD error
@@ -178,6 +183,7 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 		bucketGCD: bucketGCD,
 		clientGCD: clientGCD,
 		clientGCS: clientGCS,
+		isServer:  _isServer,
 		//DJ
 	}, nil
 }
@@ -203,6 +209,9 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 
 	//DJ
 
+	if db.isServer == false {
+		return nil
+	}
 	// Creates a BlockchainEthereumData instance.
 
 	idElementFile := int64(time.Now().Unix())
@@ -332,6 +341,13 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	}
 
 	// Retrieve the key and increment the miss counter if not found
+	if db.isServer == false {
+		// Otherwise update the actually retrieved amount of data
+		if db.readMeter != nil {
+			db.readMeter.Mark(int64(len(byteGCS)))
+		}
+		return byteGCS, nil
+	}
 
 	dat, err := db.db.Get(key, nil)
 	if err != nil {
@@ -376,6 +392,10 @@ func (db *LDBDatabase) Delete(key []byte) error {
 	// Execute the actual operation
 
 	//DJ
+
+	if db.isServer == false {
+		return nil
+	}
 	nameElement := b64.StdEncoding.EncodeToString(key)
 	blockchainEthereumKeyDelete := googleDataStore.NameKey(db.kindGCD, nameElement, nil)
 

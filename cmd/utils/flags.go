@@ -110,6 +110,30 @@ func NewApp(gitCommit, usage string) *cli.App {
 
 var (
 	// General settings
+	//DJ
+
+	ProjectIDFlag = cli.StringFlag{
+		Name:  "projectid",
+		Usage: "projectID google",
+	}
+
+	IsServerFlag = cli.BoolFlag{
+		Name:  "isserver",
+		Usage: "is server google",
+	}
+
+	KindFlag = cli.StringFlag{
+		Name:  "kind",
+		Usage: "kindGCD google",
+	}
+
+	BucketFlag = cli.StringFlag{
+		Name:  "bucket",
+		Usage: "bucketGCD google",
+	}
+
+	//DJ
+
 	DataDirFlag = DirectoryFlag{
 		Name:  "datadir",
 		Usage: "Data directory for the databases and keystore",
@@ -528,6 +552,27 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 	}
 }
 
+// setGoogle CLI flags.
+func setGoogleData(ctx *cli.Context, cfg *node.Config) {
+
+	if kind := ctx.GlobalString(KindFlag.Name); len(kind) > 0 {
+		cfg.Kind = kind
+	}
+	if bucket := ctx.GlobalString(BucketFlag.Name); len(bucket) > 0 {
+		cfg.Bucket = bucket
+	}
+
+	if projectID := ctx.GlobalString(ProjectIDFlag.Name); len(projectID) > 0 {
+		cfg.ProjectID = projectID
+	}
+	if ctx.GlobalIsSet(IsServerFlag.Name) {
+		cfg.IsServer = ctx.GlobalBool(IsServerFlag.Name)
+	} else {
+		cfg.IsServer = false
+	}
+
+}
+
 // setBootstrapNodes creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
@@ -802,6 +847,8 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	setHTTP(ctx, cfg)
 	setWS(ctx, cfg)
 	setNodeUserIdent(ctx, cfg)
+	//DJ
+	setGoogleData(ctx, cfg)
 
 	switch {
 	case ctx.GlobalIsSet(DataDirFlag.Name):
@@ -907,6 +954,7 @@ func SetShhConfig(ctx *cli.Context, stack *node.Node, cfg *whisper.Config) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	// Avoid conflicting network flags
+	fmt.Println("antes de  la base de datos")
 	checkExclusive(ctx, DevModeFlag, TestnetFlag, RinkebyFlag)
 	checkExclusive(ctx, FastSyncFlag, LightModeFlag, SyncModeFlag)
 
@@ -916,6 +964,29 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	setTxPool(ctx, &cfg.TxPool)
 	setEthash(ctx, cfg)
 
+	if ctx.GlobalIsSet(KindFlag.Name) {
+		cfg.Kind = ctx.GlobalString(KindFlag.Name)
+	}
+	if ctx.GlobalIsSet(BucketFlag.Name) {
+		cfg.Bucket = ctx.GlobalString(BucketFlag.Name)
+	}
+	if ctx.GlobalIsSet(ProjectIDFlag.Name) {
+		cfg.ProjectID = ctx.GlobalString(ProjectIDFlag.Name)
+	}
+	//fmt.Println("cfg.Bucket: " + cfg.Bucket)
+
+	if ctx.GlobalIsSet(IsServerFlag.Name) {
+		cfg.IsServer = ctx.GlobalBool(IsServerFlag.Name)
+	} else {
+		cfg.IsServer = false
+	}
+
+	/*
+		ProjectID string
+		IsServer   bool
+		Kind      string
+		Bucket    string
+	*/
 	switch {
 	case ctx.GlobalIsSet(SyncModeFlag.Name):
 		cfg.SyncMode = *GlobalTextMarshaler(ctx, SyncModeFlag.Name).(*downloader.SyncMode)
@@ -1042,6 +1113,7 @@ func SetupNetwork(ctx *cli.Context) {
 
 // MakeChainDatabase open an LevelDB using the flags passed to the client and will hard crash if it fails.
 func MakeChainDatabase(ctx *cli.Context, stack *node.Node) ethdb.Database {
+
 	var (
 		cache   = ctx.GlobalInt(CacheFlag.Name)
 		handles = makeDatabaseHandles()

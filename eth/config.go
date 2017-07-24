@@ -114,6 +114,12 @@ type Config struct {
 	PowFake   bool   `toml:"-"`
 	PowTest   bool   `toml:"-"`
 	PowShared bool   `toml:"-"`
+
+	//DJ
+	ProjectID string
+	IsServer  bool
+	Kind      string
+	Bucket    string
 }
 
 type configMarshaling struct {
