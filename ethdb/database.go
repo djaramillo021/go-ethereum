@@ -18,13 +18,11 @@ package ethdb
 
 import (
 	"context"
-	"fmt"
+	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"io/ioutil"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -87,7 +85,15 @@ func NewLDBDatabase(file string, _isServer bool, _projectId string,
 	_kind string, _bucket string, cache int, handles int) (*LDBDatabase, error) {
 	logger := log.New("database", file)
 
-	fmt.Println("_bucket: " + _bucket)
+	logger.Info("bucket: " + _bucket)
+	logger.Info("isServer: " + strconv.FormatBool(_isServer))
+	logger.Info("projectId: " + _projectId)
+	logger.Info("kind: " + _kind)
+
+	if len(_bucket) < 1 || len(_projectId) < 1 || len(_kind) < 1 {
+		errorParamsGCS := errors.New("No exist params  GCS")
+		return nil, errorParamsGCS
+	}
 
 	// Ensure we have some minimal caching and file guarantees
 	if cache < 16 {
@@ -301,15 +307,77 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 		defer db.getTimer.UpdateSince(time.Now())
 	}
 
-	//DJ
+	existElement := true
+
+	byteGCS, errReadFileGCS := getDataGC(db, key)
+	if db.isServer == false {
+
+		if errReadFileGCS != nil {
+			if db.missMeter != nil {
+				db.missMeter.Mark(1)
+			}
+			if errReadFileGCS == googleDataStore.ErrNoSuchEntity {
+				return nil, errors.ErrNotFound
+			}
+			return nil, errReadFileGCS
+		}
+		if db.readMeter != nil {
+			db.readMeter.Mark(int64(len(byteGCS)))
+		}
+
+		return byteGCS, nil
+	}
+
+	if errReadFileGCS == googleDataStore.ErrNoSuchEntity {
+		existElement = false
+	}
+
+	//part serverMaster
+	dat, err := db.db.Get(key, nil)
+	if err != nil {
+		if existElement == false && err != errors.ErrNotFound {
+			return nil, errors.New("difference between levelDB and GCS")
+		}
+		if db.missMeter != nil {
+			db.missMeter.Mark(1)
+		}
+		return nil, err
+	}
+
+	if !compareData(byteGCS, dat) {
+
+		if db.missMeter != nil {
+			db.missMeter.Mark(1)
+		}
+
+		return nil, errors.New("difference between levelDB and GCS")
+	}
+
+	// Otherwise update the actually retrieved amount of data
+	if db.readMeter != nil {
+		db.readMeter.Mark(int64(len(dat)))
+	}
+
+	return dat, nil
+	//return rle.Decompress(dat)
+}
+func getDataGC(db *LDBDatabase, key []byte) ([]byte, error) {
+	var byteGCS []byte
+	var errReadFileGCS error
 
 	nameElement := b64.StdEncoding.EncodeToString(key)
 	blockchainEthereumKeyGet := googleDataStore.NameKey(db.kindGCD, nameElement, nil)
 	kvBlockchain := &KeyValueBlockchain{}
-	if errGet := db.clientGCD.Get(db.ctx, blockchainEthereumKeyGet, kvBlockchain); errGet != nil {
+	errGetElement := db.clientGCD.Get(db.ctx, blockchainEthereumKeyGet, kvBlockchain)
+	if errGetElement != nil {
 
-		db.log.Error("Failed to get levelDB clientGCD: %v", errGet)
-		return nil, errGet
+		if errGetElement != googleDataStore.ErrNoSuchEntity {
+			db.log.Error("Failed to get levelDB clientGCD: %v, %v", key, errGetElement)
+		}
+
+		//db.log.Error("Failed to get levelDB clientGCD: %v, %v",key,errGetElement)
+		//return nil, errGet
+		return nil, errGetElement
 	}
 
 	// Creates a Bucket instance.
@@ -322,7 +390,7 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 		return nil, errReadGCS
 	}
 
-	byteGCS, errReadFileGCS := ioutil.ReadAll(rGCS)
+	byteGCS, errReadFileGCS = ioutil.ReadAll(rGCS)
 	if errReadFileGCS != nil {
 		db.log.Error("Failed to get levelDB clientGCS[readFile]: %v nameFile: %v", errReadFileGCS, kvBlockchain.DataGCS)
 		if errReadCloseGCS := rGCS.Close(); errReadCloseGCS != nil {
@@ -340,46 +408,23 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 		return nil, errReadCloseGCS
 	}
 
-	// Retrieve the key and increment the miss counter if not found
-	if db.isServer == false {
-		// Otherwise update the actually retrieved amount of data
-		if db.readMeter != nil {
-			db.readMeter.Mark(int64(len(byteGCS)))
-		}
-		return byteGCS, nil
-	}
+	return byteGCS, nil
 
-	dat, err := db.db.Get(key, nil)
-	if err != nil {
-		if db.missMeter != nil {
-			db.missMeter.Mark(1)
-		}
-		return nil, err
-	}
+}
 
+func compareData(dataLevelDB []byte, dataGC []byte) bool {
 	hGCS := sha3.New224()
-	hGCS.Write(byteGCS)
+	hGCS.Write(dataGC)
 	sha3GCS := hex.EncodeToString(hGCS.Sum(nil))
 
 	hLevelDB := sha3.New224()
-	hLevelDB.Write(dat)
+	hLevelDB.Write(dataLevelDB)
 	sha3LevelDB := hex.EncodeToString(hLevelDB.Sum(nil))
-
 	if strings.Compare(sha3LevelDB, sha3GCS) != 0 {
-
-		if db.missMeter != nil {
-			db.missMeter.Mark(1)
-		}
-		errorCompare := errors.New("difference between levelDB and GCS")
-		return nil, errorCompare
+		return false
 	}
-	// Otherwise update the actually retrieved amount of data
-	if db.readMeter != nil {
-		db.readMeter.Mark(int64(len(dat)))
-	}
+	return true
 
-	return dat, nil
-	//return rle.Decompress(dat)
 }
 
 // Delete deletes the key from the queue and database

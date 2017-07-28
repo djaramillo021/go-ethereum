@@ -119,7 +119,7 @@ var (
 
 	IsServerFlag = cli.BoolFlag{
 		Name:  "isserver",
-		Usage: "is server google",
+		Usage: "Enable server google",
 	}
 
 	KindFlag = cli.StringFlag{
