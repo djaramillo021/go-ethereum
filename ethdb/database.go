@@ -42,6 +42,12 @@ import (
 	"encoding/hex"
 )
 
+// Common errors.
+var (
+	ErrNoExistGC  = errors.New("No exist params  GCS")
+	ErrDiffLvDBGC = errors.New("difference between levelDB and GCS")
+)
+
 type KeyValueBlockchain struct {
 	KeyBlokchain []byte
 	DataGCS      string
@@ -91,7 +97,7 @@ func NewLDBDatabase(file string, _isServer bool, _projectId string,
 	logger.Info("kind: " + _kind)
 
 	if len(_bucket) < 1 || len(_projectId) < 1 || len(_kind) < 1 {
-		errorParamsGCS := errors.New("No exist params  GCS")
+		errorParamsGCS := ErrNoExistGC
 		return nil, errorParamsGCS
 	}
 
@@ -336,7 +342,7 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	dat, err := db.db.Get(key, nil)
 	if err != nil {
 		if existElement == false && err != errors.ErrNotFound {
-			return nil, errors.New("difference between levelDB and GCS")
+			return nil, ErrDiffLvDBGC
 		}
 		if db.missMeter != nil {
 			db.missMeter.Mark(1)
@@ -350,7 +356,7 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 			db.missMeter.Mark(1)
 		}
 
-		return nil, errors.New("difference between levelDB and GCS")
+		return nil, ErrDiffLvDBGC
 	}
 
 	// Otherwise update the actually retrieved amount of data
