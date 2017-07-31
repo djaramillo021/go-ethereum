@@ -19,6 +19,9 @@ package ethdb
 import (
 	"context"
 	"io/ioutil"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,13 +64,20 @@ type LDBDatabase struct {
 	db *leveldb.DB // LevelDB instance
 
 	//DJ
-	ctx       context.Context //context google
-	projectID string
-	kindGCD   string
-	bucketGCD string
-	clientGCD *googleDataStore.Client
-	clientGCS *googleStore.Client
-	isServer  bool
+	blockClosePut    bool
+	blockCloseDelete bool
+	blockCloseGet    bool
+	executingGet     bool
+	executingPut     bool
+	executingDelete  bool
+	ctx              context.Context //context google
+	projectID        string
+	kindGCD          string
+	bucketGCD        string
+	clientGCD        *googleDataStore.Client
+	clientGCS        *googleStore.Client
+	isServer         bool
+	dataDirErrorGC   string
 	//DJ termino
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
@@ -87,14 +97,27 @@ type LDBDatabase struct {
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
-func NewLDBDatabase(file string, _isServer bool, _projectId string,
+func NewLDBDatabase(file string, dataDir string, _isServer bool, _projectId string,
 	_kind string, _bucket string, cache int, handles int) (*LDBDatabase, error) {
+	var db *leveldb.DB
+	var err error
 	logger := log.New("database", file)
 
+	logger.Info("dataDir: " + dataDir)
 	logger.Info("bucket: " + _bucket)
 	logger.Info("isServer: " + strconv.FormatBool(_isServer))
 	logger.Info("projectId: " + _projectId)
 	logger.Info("kind: " + _kind)
+
+	_dataDirErrorGC := dataDir + string(filepath.Separator) + "errorGC"
+	if _, err := os.Stat(_dataDirErrorGC); os.IsNotExist(err) {
+		// path/to/whatever does not exist
+		if errMkdir := os.Mkdir(_dataDirErrorGC, 0777); errMkdir != nil {
+			return nil, errMkdir
+		}
+
+	}
+	_dataDirErrorGC = _dataDirErrorGC + string(filepath.Separator)
 
 	if len(_bucket) < 1 || len(_projectId) < 1 || len(_kind) < 1 {
 		errorParamsGCS := ErrNoExistGC
@@ -110,19 +133,25 @@ func NewLDBDatabase(file string, _isServer bool, _projectId string,
 	}
 	logger.Info("Allocated cache and file handles", "cache", cache, "handles", handles)
 
-	// Open the db and recover any potential corruptions
-	db, err := leveldb.OpenFile(file, &opt.Options{
-		OpenFilesCacheCapacity: handles,
-		BlockCacheCapacity:     cache / 2 * opt.MiB,
-		WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
-		Filter:                 filter.NewBloomFilter(10),
-	})
-	if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
-		db, err = leveldb.RecoverFile(file, nil)
-	}
-	// (Re)check for errors and abort if opening of the db failed
-	if err != nil {
-		return nil, err
+	if _isServer {
+
+		// Open the db and recover any potential corruptions
+		db, err = leveldb.OpenFile(file, &opt.Options{
+			OpenFilesCacheCapacity: handles,
+			BlockCacheCapacity:     cache / 2 * opt.MiB,
+			WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
+			Filter:                 filter.NewBloomFilter(10),
+		})
+		if _, corrupted := err.(*errors.ErrCorrupted); corrupted {
+			db, err = leveldb.RecoverFile(file, nil)
+		}
+		// (Re)check for errors and abort if opening of the db failed
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		db = nil
+		err = nil
 	}
 
 	//DJ
@@ -167,13 +196,16 @@ func NewLDBDatabase(file string, _isServer bool, _projectId string,
 	}
 
 	if clientGCD == nil || clientGCS == nil {
-		errDb := db.Close()
-		if err == nil {
-			logger.Error("Database closed")
-		} else {
-			logger.Error("Failed to close database", "err", errDb)
-			return nil, errDb
+		if _isServer {
+			errDb := db.Close()
+			if err == nil {
+				logger.Info("Database closed")
+			} else {
+				logger.Error("Failed to close database", "err", errDb)
+				return nil, errDb
+			}
 		}
+
 	}
 
 	if clientGCD == nil {
@@ -184,7 +216,7 @@ func NewLDBDatabase(file string, _isServer bool, _projectId string,
 		return nil, errGCS
 	}
 	//DJ
-	return &LDBDatabase{
+	lDBDatabase := &LDBDatabase{
 		fn:  file,
 		db:  db,
 		log: logger,
@@ -196,8 +228,92 @@ func NewLDBDatabase(file string, _isServer bool, _projectId string,
 		clientGCD: clientGCD,
 		clientGCS: clientGCS,
 		isServer:  _isServer,
+
+		blockClosePut:    false,
+		blockCloseDelete: false,
+		blockCloseGet:    false,
+		executingGet:     false,
+		executingPut:     false,
+		executingDelete:  false,
+		dataDirErrorGC:   _dataDirErrorGC,
 		//DJ
-	}, nil
+	}
+
+	if errConsistency := consistencyGC(lDBDatabase); errConsistency != nil {
+		return nil, errConsistency
+	}
+
+	return lDBDatabase, nil
+
+}
+
+func consistencyGC(db *LDBDatabase) error {
+
+	rPutRestore, _ := regexp.Compile("^put_restore_(.+)_F_(.+)$")
+	rPutDelete, _ := regexp.Compile("^put_delete_(.+)$")
+	rDeletePut, _ := regexp.Compile("^delete_put_(.+)_F_(.+)$")
+
+	for {
+		files, _ := ioutil.ReadDir(db.dataDirErrorGC)
+		if len(files) < 1 {
+			break
+		}
+		f := files[0]
+		//put
+		if resultPutRestore := rPutRestore.FindStringSubmatch(f.Name()); resultPutRestore != nil {
+			key := resultPutRestore[1]
+			value := resultPutRestore[2]
+
+			blockchainEthereumKey := googleDataStore.NameKey(db.kindGCD, key, nil)
+			kvRestoreBlockchain := &KeyValueBlockchain{}
+			if errRestore := db.clientGCD.Get(db.ctx, blockchainEthereumKey, kvRestoreBlockchain); errRestore != nil {
+
+				db.log.Error("Failed to read consistencyGC to putRestore clientGCD: %v", errRestore)
+				return errRestore
+
+			}
+			kvRestoreBlockchain.DataGCS = value
+			if _, err := db.clientGCD.Put(db.ctx, blockchainEthereumKey, &kvRestoreBlockchain); err != nil {
+				db.log.Error("Failed to put consistencyGC to putRestore clientGCD: %v , keyGCD: %v ,keyGCS: %v", err, key, value)
+				return err
+			}
+
+		} else if resultPutDelete := rPutDelete.FindStringSubmatch(f.Name()); resultPutDelete != nil {
+			key := resultPutDelete[1]
+			blockchainEthereumKey := googleDataStore.NameKey(db.kindGCD, key, nil)
+			if errDelete := db.clientGCD.Delete(db.ctx, blockchainEthereumKey); errDelete != nil {
+				db.log.Error("Failed to put  consistencyGC to putDelete  clientGCD : %v , keyGCD: %v", errDelete, key)
+				return errDelete
+			}
+
+		} else if resultDeletePut := rDeletePut.FindStringSubmatch(f.Name()); resultDeletePut != nil {
+			key := resultDeletePut[1]
+			value := resultDeletePut[2]
+
+			blockchainEthereumKey := googleDataStore.NameKey(db.kindGCD, key, nil)
+			kvRestoreBlockchain := &KeyValueBlockchain{}
+			if errRestore := db.clientGCD.Get(db.ctx, blockchainEthereumKey, kvRestoreBlockchain); errRestore != nil {
+
+				db.log.Error("Failed to read consistencyGC to deletePut clientGCD: %v", errRestore)
+				return errRestore
+
+			}
+			kvRestoreBlockchain.DataGCS = value
+			if _, err := db.clientGCD.Put(db.ctx, blockchainEthereumKey, &kvRestoreBlockchain); err != nil {
+				db.log.Error("Failed to put consistencyGC to deletePut clientGCD: %v , keyGCD: %v ,keyGCS: %v", err, key, value)
+				return err
+			}
+
+		}
+
+		var err = os.Remove(db.dataDirErrorGC + f.Name())
+		if err != nil {
+			db.log.Error("Failed to delete file consistencyGC  clientGCD: %v , keyGCD:", err, f.Name())
+			return err
+		}
+
+	}
+	return nil
 }
 
 // Path returns the path to the database directory.
@@ -207,11 +323,22 @@ func (db *LDBDatabase) Path() string {
 
 // Put puts the given key / value to the queue
 func (db *LDBDatabase) Put(key []byte, value []byte) error {
+	if db.blockClosePut {
+		for {
+
+		}
+	}
+	db.executingPut = true
 
 	// Measure the database put latency, if requested
 	if db.putTimer != nil {
 		defer db.putTimer.UpdateSince(time.Now())
+
 	}
+
+	defer func() {
+		db.executingPut = false
+	}()
 	// Generate the data to write to disk, update the meter and write
 	//value = rle.Compress(value)
 
@@ -288,6 +415,11 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 		if isUpdate {
 			if _, err := db.clientGCD.Put(db.ctx, blockchainEthereumKeyNew, &kvRestoreBlockchain); err != nil {
 				db.log.Error("Failed to rollbackPut to put levelDB  clientGCD: %v , keyGCD: %v ,keyGCS: %v", err, nameElement, kvRestoreBlockchain.DataGCS)
+
+				if errWriteFile := ioutil.WriteFile(db.dataDirErrorGC+"put_restore_"+nameElement+"_F_"+kvRestoreBlockchain.DataGCS, []byte(""), 0644); errWriteFile != nil {
+					db.log.Error("Failed to write restoreFile to put levelDB  clientGCD: %v , keyGCD: %v ,keyGCS: %v", err, nameElement, kvRestoreBlockchain.DataGCS)
+					return errWriteFile
+				}
 				return err
 			}
 
@@ -295,6 +427,10 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 			//delete service
 			if errDelete := db.clientGCD.Delete(db.ctx, blockchainEthereumKeyNew); errDelete != nil {
 				db.log.Error("Failed to rollbackDelete to put levelDB  clientGCD : %v , keyGCD: %v", errDelete, nameElement)
+				if errWriteFile := ioutil.WriteFile(db.dataDirErrorGC+"put_delete_"+nameElement, []byte(""), 0644); errWriteFile != nil {
+					db.log.Error("Failed to write deleteFile  to put levelDB  clientGCD : %v , keyGCD: %v", errDelete, nameElement)
+					return errWriteFile
+				}
 				return errDelete
 			}
 		}
@@ -308,10 +444,19 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 
 // Get returns the given key if it's present.
 func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
+	if db.blockCloseGet {
+		for {
+
+		}
+	}
+	db.executingGet = true
 	// Measure the database get latency, if requested
 	if db.getTimer != nil {
 		defer db.getTimer.UpdateSince(time.Now())
 	}
+	defer func() {
+		db.executingGet = false
+	}()
 
 	existElement := true
 
@@ -435,11 +580,21 @@ func compareData(dataLevelDB []byte, dataGC []byte) bool {
 
 // Delete deletes the key from the queue and database
 func (db *LDBDatabase) Delete(key []byte) error {
+	if db.blockCloseDelete {
+		for {
 
+		}
+	}
+	db.executingDelete = true
 	// Measure the database delete latency, if requested
 	if db.delTimer != nil {
 		defer db.delTimer.UpdateSince(time.Now())
+
 	}
+
+	defer func() {
+		db.executingDelete = false
+	}()
 	// Execute the actual operation
 
 	//DJ
@@ -466,6 +621,11 @@ func (db *LDBDatabase) Delete(key []byte) error {
 	if errDB != nil /*|| db.clientGCD == nil*/ {
 		if _, errPut := db.clientGCD.Put(db.ctx, blockchainEthereumKeyDelete, &kvRestoreBlockchain); errPut != nil {
 			db.log.Error("Failed to rollbackPut to delete levelDB clientGCD: %v , keyGCD: %v ,keyGCS: %v", errPut, nameElement, kvRestoreBlockchain.DataGCS)
+
+			if errWriteFile := ioutil.WriteFile(db.dataDirErrorGC+"delete_put_"+nameElement, []byte(kvRestoreBlockchain.DataGCS), 0644); errWriteFile != nil {
+				db.log.Error("Failed to write restoreFile to delete levelDB clientGCD: %v , keyGCD: %v ,keyGCS: %v", errPut, nameElement, kvRestoreBlockchain.DataGCS)
+				return errWriteFile
+			}
 			return errPut
 		}
 		db.log.Error("Failed to delete levelDB: %v ,key : %v", errDB, key)
@@ -483,6 +643,7 @@ func (db *LDBDatabase) NewIterator() iterator.Iterator {
 
 func (db *LDBDatabase) Close() {
 	// Stop the metrics collection to avoid internal database races
+
 	db.quitLock.Lock()
 	defer db.quitLock.Unlock()
 
@@ -493,14 +654,25 @@ func (db *LDBDatabase) Close() {
 			db.log.Error("Metrics collection failed", "err", err)
 		}
 	}
-	err := db.db.Close()
-	if err == nil {
-		db.log.Info("Database closed")
-	} else {
-		db.log.Error("Failed to close database", "err", err)
+
+	db.blockCloseDelete = true
+	db.blockClosePut = true
+	db.blockCloseGet = true
+
+	for {
+		if db.executingDelete == false && db.executingPut == false && db.executingGet == false {
+			break
+		}
 	}
 
-	//if db.clientGCD != nil {
+	if db.isServer {
+		err := db.db.Close()
+		if err == nil {
+			db.log.Info("Database closed")
+		} else {
+			db.log.Error("Failed to close database", "err", err)
+		}
+	}
 
 	errGCD := db.clientGCD.Close()
 	if errGCD == nil {

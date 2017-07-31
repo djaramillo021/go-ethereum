@@ -44,7 +44,7 @@ func (ctx *ServiceContext) OpenDatabase(name string, cache int, handles int) (et
 		return ethdb.NewMemDatabase()
 	}
 	//DJ db
-	db, err := ethdb.NewLDBDatabase(ctx.config.resolvePath(name), ctx.config.IsServer, ctx.config.ProjectID, ctx.config.Kind, ctx.config.Bucket, cache, handles)
+	db, err := ethdb.NewLDBDatabase(ctx.config.resolvePath(name), ctx.config.DataDir, ctx.config.IsServer, ctx.config.ProjectID, ctx.config.Kind, ctx.config.Bucket, cache, handles)
 	if err != nil {
 		return nil, err
 	}
