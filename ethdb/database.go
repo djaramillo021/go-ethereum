@@ -53,10 +53,14 @@ var (
 	ErrDbClosed   = errors.New("Database closed for interruption")
 )
 
+type KeyValueBlockchainDelete struct {
+	KeyBlokchain []byte
+	timeNow      string
+}
+
 type KeyValueBlockchain struct {
 	KeyBlokchain []byte
 	DataGCS      string
-	//Base64       string
 }
 
 var OpenFileLimit = 64
@@ -76,6 +80,7 @@ type LDBDatabase struct {
 	ctx              context.Context //context google
 	projectID        string
 	kindGCD          string
+	kindGCDDelete    string
 	bucketGCD        string
 	clientGCD        *googleDataStore.Client
 	clientGCS        *googleStore.Client
@@ -220,11 +225,13 @@ func NewLDBDatabase(file string, dataDir string, _isServer bool, _projectId stri
 		db:  db,
 		log: logger,
 		//DJ
-		ctx:       ctx,
-		projectID: projectID,
-		kindGCD:   kindGCD,
-		bucketGCD: bucketGCD,
-		clientGCD: clientGCD,
+		ctx:           ctx,
+		projectID:     projectID,
+		kindGCD:       kindGCD,
+		kindGCDDelete: kindGCD + "Delete",
+		bucketGCD:     bucketGCD,
+		clientGCD:     clientGCD,
+
 		clientGCS: clientGCS,
 		isServer:  _isServer,
 
@@ -735,7 +742,7 @@ func (db *LDBDatabase) Delete(key []byte) error {
 
 	errDB := db.db.Delete(key, nil)
 	if errDB != nil /*|| db.clientGCD == nil*/ {
-		if _, errPut := db.clientGCD.Put(db.ctx, blockchainEthereumKeyDelete, &kvRestoreBlockchain); errPut != nil {
+		if _, errPut := db.clientGCD.Put(db.ctx, blockchainEthereumKeyDelete, kvRestoreBlockchain); errPut != nil {
 			db.log.Error("Failed to rollbackPut to delete levelDB clientGCD", "keyGCD", nameElement, "keyGCS", kvRestoreBlockchain.DataGCS, "errPut", errPut)
 
 			nameFileError := "delete_put_" + generateFilename(key, []byte(nameElement))
@@ -759,6 +766,18 @@ func (db *LDBDatabase) Delete(key []byte) error {
 		}
 		db.log.Error("Failed to delete levelDB", "key", key, "errDB", errDB)
 		return errDB
+	}
+	nameKindDelete := kvRestoreBlockchain.DataGCS
+	blockchainKeyGCDDelete := googleDataStore.NameKey(db.kindGCDDelete, nameKindDelete, nil)
+	blockchainDeleteData := KeyValueBlockchainDelete{
+		KeyBlokchain: key,
+		timeNow:      strconv.FormatInt(int64(time.Now().Unix()), 10),
+	}
+
+	//delete service data google cloud storage
+	if _, err := db.clientGCD.Put(db.ctx, blockchainKeyGCDDelete, &blockchainDeleteData); err != nil {
+		db.log.Error("Failed to registe  kindGCDDelete clientGCD", "name", db.kindGCDDelete, "err", err)
+		//return err
 	}
 
 	//DJ termino
