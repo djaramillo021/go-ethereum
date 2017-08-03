@@ -115,6 +115,7 @@ var (
 		utils.IsServerFlag,
 		utils.BucketFlag,
 		utils.KindFlag,
+		utils.IsDevGCFlag,
 	}
 
 	rpcFlags = []cli.Flag{

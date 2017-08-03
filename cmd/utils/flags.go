@@ -132,6 +132,11 @@ var (
 		Usage: "bucketGCD google",
 	}
 
+	IsDevGCFlag = cli.BoolFlag{
+		Name:  "isdevgc",
+		Usage: "Enable dev GC",
+	}
+
 	//DJ
 
 	DataDirFlag = DirectoryFlag{
@@ -569,6 +574,12 @@ func setGoogleData(ctx *cli.Context, cfg *node.Config) {
 		cfg.IsServer = ctx.GlobalBool(IsServerFlag.Name)
 	} else {
 		cfg.IsServer = false
+	}
+
+	if ctx.GlobalIsSet(IsDevGCFlag.Name) {
+		cfg.IsDevGC = ctx.GlobalBool(IsDevGCFlag.Name)
+	} else {
+		cfg.IsDevGC = false
 	}
 
 }

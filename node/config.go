@@ -132,6 +132,7 @@ type Config struct {
 	//DJ
 	ProjectID string
 	IsServer  bool
+	IsDevGC   bool
 	Kind      string
 	Bucket    string
 }

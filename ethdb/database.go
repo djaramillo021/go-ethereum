@@ -85,6 +85,7 @@ type LDBDatabase struct {
 	clientGCD        *googleDataStore.Client
 	clientGCS        *googleStore.Client
 	isServer         bool
+	isDevGC          bool
 	dataDirErrorGC   string
 	//DJ termino
 
@@ -105,14 +106,14 @@ type LDBDatabase struct {
 }
 
 // NewLDBDatabase returns a LevelDB wrapped object.
-func NewLDBDatabase(file string, dataDir string, _isServer bool, _projectId string,
+func NewLDBDatabase(file string, dataDir string, _isServer bool, _isDevGC bool, _projectId string,
 	_kind string, _bucket string, cache int, handles int) (*LDBDatabase, error) {
 	var db *leveldb.DB
 	var err error
 	logger := log.New("database", file)
 
 	//logger.Info("dataDir", + )
-	logger.Info("Data google cloud", "projectId", _projectId, "isServer", strconv.FormatBool(_isServer), "bucket", _bucket, "kind", _kind)
+	logger.Info("Data google cloud", "projectId", _projectId, "isServer", strconv.FormatBool(_isServer), "isDevGC", strconv.FormatBool(_isDevGC), "bucket", _bucket, "kind", _kind)
 	_dataDirErrorGC := dataDir + string(filepath.Separator) + "errorGC"
 	if _, err := os.Stat(_dataDirErrorGC); os.IsNotExist(err) {
 		// path/to/whatever does not exist
@@ -234,6 +235,7 @@ func NewLDBDatabase(file string, dataDir string, _isServer bool, _projectId stri
 
 		clientGCS: clientGCS,
 		isServer:  _isServer,
+		isDevGC:   _isDevGC,
 
 		blockClosePut:    false,
 		blockCloseDelete: false,
@@ -265,6 +267,7 @@ func NewLDBDatabase(file string, dataDir string, _isServer bool, _projectId stri
 	return lDBDatabase, nil
 
 }
+func readFileErrorGC()
 
 func consistencyGC(db *LDBDatabase) error {
 

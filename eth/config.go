@@ -120,6 +120,7 @@ type Config struct {
 	IsServer  bool
 	Kind      string
 	Bucket    string
+	IsDevGC   bool
 }
 
 type configMarshaling struct {

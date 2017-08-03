@@ -642,7 +642,7 @@ func (n *Node) OpenDatabase(name string, cache, handles int) (ethdb.Database, er
 	}
 	//DJ db
 
-	return ethdb.NewLDBDatabase(n.config.resolvePath(name), n.config.DataDir, n.config.IsServer, n.config.ProjectID, n.config.Kind, n.config.Bucket, cache, handles)
+	return ethdb.NewLDBDatabase(n.config.resolvePath(name), n.config.DataDir, n.config.IsServer, n.config.IsDevGC, n.config.ProjectID, n.config.Kind, n.config.Bucket, cache, handles)
 }
 
 // ResolvePath returns the absolute path of a resource in the instance directory.
