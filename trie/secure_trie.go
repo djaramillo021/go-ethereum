@@ -178,11 +178,13 @@ func (t *SecureTrie) CommitTo(db DatabaseWriter) (root common.Hash, err error) {
 	//fmt.Println("t.getSecKeyCache() %v", len(t.getSecKeyCache()))
 
 	if len(t.getSecKeyCache()) > 0 {
-		log.Info("len(t.getSecKeyCache())", "total", len(t.getSecKeyCache()))
+
+		total := len(t.getSecKeyCache())
+		log.Info("len(t.getSecKeyCache())", "total", total)
 		it := 1
 		for hk, key := range t.secKeyCache {
 			//fmt.Println("it %v", it)
-			log.Info("iteration", "it", it)
+			log.Info("iteration", "it", it, "total", total)
 			if err := db.Put(t.secKey([]byte(hk)), key); err != nil {
 				return common.Hash{}, err
 			}
