@@ -159,10 +159,13 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
 			genesis = DefaultGenesisBlock()
+			log.Debug("Exit Writing default main-net genesis block")
 		} else {
 			log.Info("Writing custom genesis block")
 		}
+		//log.Debug("Init Commit")
 		block, err := genesis.Commit(db)
+		//log.Debug("Exit Commit")
 		return genesis.Config, block.Hash(), err
 	}
 
@@ -257,6 +260,7 @@ func (g *Genesis) ToBlock() (*types.Block, *state.StateDB) {
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
 func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+	//log.Debug("Init  Commit")
 	block, statedb := g.ToBlock()
 	if block.Number().Sign() != 0 {
 		return nil, fmt.Errorf("can't commit genesis block with number > 0")

@@ -248,8 +248,10 @@ func NewLDBDatabase(file string, dataDir string, _isServer bool, _isDevGC bool, 
 		//DJ
 	}
 
-	if errConsistency := consistencyGC(lDBDatabase); errConsistency != nil {
-		return nil, errConsistency
+	if _isDevGC == false {
+		if errConsistency := consistencyGC(lDBDatabase); errConsistency != nil {
+			return nil, errConsistency
+		}
 	}
 
 	/*
@@ -267,7 +269,6 @@ func NewLDBDatabase(file string, dataDir string, _isServer bool, _isDevGC bool, 
 	return lDBDatabase, nil
 
 }
-func readFileErrorGC()
 
 func consistencyGC(db *LDBDatabase) error {
 
@@ -430,6 +431,31 @@ func generateFilename(key []byte, value []byte) string {
 
 // Put puts the given key / value to the queue
 func (db *LDBDatabase) Put(key []byte, value []byte) error {
+	if db.isDevGC {
+		return db.PutBase(key, value)
+
+	}
+	return db.PutGC(key, value)
+
+}
+
+// Put puts the given key / value to the queue
+func (db *LDBDatabase) PutBase(key []byte, value []byte) error {
+	// Measure the database put latency, if requested
+	if db.putTimer != nil {
+		defer db.putTimer.UpdateSince(time.Now())
+	}
+	// Generate the data to write to disk, update the meter and write
+	//value = rle.Compress(value)
+
+	if db.writeMeter != nil {
+		db.writeMeter.Mark(int64(len(value)))
+	}
+	return db.db.Put(key, value, nil)
+}
+
+// Put puts the given key / value to the queue
+func (db *LDBDatabase) PutGC(key []byte, value []byte) error {
 
 	// Measure the database put latency, if requested
 	if db.putTimer != nil {
@@ -569,8 +595,37 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 	return errDB
 }
 
-// Get returns the given key if it's present.
 func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
+	if db.isDevGC {
+		return db.GetBase(key)
+	}
+	return db.GetGC(key)
+}
+
+// Get returns the given key if it's present.
+func (db *LDBDatabase) GetBase(key []byte) ([]byte, error) {
+	// Measure the database get latency, if requested
+	if db.getTimer != nil {
+		defer db.getTimer.UpdateSince(time.Now())
+	}
+	// Retrieve the key and increment the miss counter if not found
+	dat, err := db.db.Get(key, nil)
+	if err != nil {
+		if db.missMeter != nil {
+			db.missMeter.Mark(1)
+		}
+		return nil, err
+	}
+	// Otherwise update the actually retrieved amount of data
+	if db.readMeter != nil {
+		db.readMeter.Mark(int64(len(dat)))
+	}
+	return dat, nil
+	//return rle.Decompress(dat)
+}
+
+// Get returns the given key if it's present.
+func (db *LDBDatabase) GetGC(key []byte) ([]byte, error) {
 
 	// Measure the database get latency, if requested
 	if db.getTimer != nil {
@@ -706,7 +761,7 @@ func compareData(dataLevelDB []byte, dataGC []byte) bool {
 }
 
 // Delete deletes the key from the queue and database
-func (db *LDBDatabase) Delete(key []byte) error {
+func (db *LDBDatabase) DeleteGC(key []byte) error {
 
 	// Measure the database delete latency, if requested
 	if db.delTimer != nil {
@@ -786,6 +841,23 @@ func (db *LDBDatabase) Delete(key []byte) error {
 	//DJ termino
 
 	return errDB
+}
+
+func (db *LDBDatabase) Delete(key []byte) error {
+	if db.isDevGC {
+		return db.DeleteBase(key)
+	}
+	return db.DeleteGC(key)
+}
+
+// Delete deletes the key from the queue and database
+func (db *LDBDatabase) DeleteBase(key []byte) error {
+	// Measure the database delete latency, if requested
+	if db.delTimer != nil {
+		defer db.delTimer.UpdateSince(time.Now())
+	}
+	// Execute the actual operation
+	return db.db.Delete(key, nil)
 }
 
 func (db *LDBDatabase) NewIterator() iterator.Iterator {
@@ -990,6 +1062,7 @@ func NewTable(db Database, prefix string) Database {
 }
 
 func (dt *table) Put(key []byte, value []byte) error {
+
 	return dt.db.Put(append([]byte(dt.prefix), key...), value)
 }
 

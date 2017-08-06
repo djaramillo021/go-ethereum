@@ -174,11 +174,19 @@ func (t *SecureTrie) NodeIterator(start []byte) NodeIterator {
 // the trie's database. Calling code must ensure that the changes made to db are
 // written back to the trie's attached database before using the trie.
 func (t *SecureTrie) CommitTo(db DatabaseWriter) (root common.Hash, err error) {
+	//fmt.Println("func (t *SecureTrie) CommitTo(db DatabaseWriter) (root common.Hash, err error)")
+	//fmt.Println("t.getSecKeyCache() %v", len(t.getSecKeyCache()))
+
 	if len(t.getSecKeyCache()) > 0 {
+		log.Info("len(t.getSecKeyCache())", "total", len(t.getSecKeyCache()))
+		it := 1
 		for hk, key := range t.secKeyCache {
+			//fmt.Println("it %v", it)
+			log.Info("iteration", "it", it)
 			if err := db.Put(t.secKey([]byte(hk)), key); err != nil {
 				return common.Hash{}, err
 			}
+			it++
 		}
 		t.secKeyCache = make(map[string][]byte)
 	}

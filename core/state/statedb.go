@@ -588,6 +588,7 @@ func (s *StateDB) clearJournalAndRefund() {
 
 // CommitTo writes the state to the given database.
 func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (root common.Hash, err error) {
+	//DJ fmt.Println("func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool)")
 	defer s.clearJournalAndRefund()
 
 	// Commit objects to the trie.
@@ -615,8 +616,11 @@ func (s *StateDB) CommitTo(dbw trie.DatabaseWriter, deleteEmptyObjects bool) (ro
 		}
 		delete(s.stateObjectsDirty, addr)
 	}
+
+	log.Debug("Write trie change")
 	// Write trie changes.
 	root, err = s.trie.CommitTo(dbw)
+	log.Debug("Exit  s.trie.CommitTo(dbw)")
 	log.Debug("Trie cache stats after commit", "misses", trie.CacheMisses(), "unloads", trie.CacheUnloads())
 	return root, err
 }

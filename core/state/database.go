@@ -146,6 +146,7 @@ type cachedTrie struct {
 }
 
 func (m cachedTrie) CommitTo(dbw trie.DatabaseWriter) (common.Hash, error) {
+	//DJ fmt.Println("func (m cachedTrie) CommitTo(dbw trie.DatabaseWriter)")
 	root, err := m.SecureTrie.CommitTo(dbw)
 	if err == nil {
 		m.db.pushTrie(m.SecureTrie)

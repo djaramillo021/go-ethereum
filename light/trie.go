@@ -114,6 +114,7 @@ func (t *odrTrie) TryDelete(key []byte) error {
 }
 
 func (t *odrTrie) CommitTo(db trie.DatabaseWriter) (common.Hash, error) {
+	//DJ fmt.Println("func (t *odrTrie) CommitTo(db trie.DatabaseWriter) (common.Hash, error)")
 	if t.trie == nil {
 		return t.id.Root, nil
 	}

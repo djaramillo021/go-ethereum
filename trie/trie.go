@@ -486,12 +486,19 @@ func (t *Trie) Commit() (root common.Hash, err error) {
 // the changes made to db are written back to the trie's attached
 // database before using the trie.
 func (t *Trie) CommitTo(db DatabaseWriter) (root common.Hash, err error) {
+
+	//DJ fmt.Println("func (t *Trie) CommitTo(db DatabaseWriter) (root common.Hash, err error)")
+
 	hash, cached, err := t.hashRoot(db)
+	//DJ fmt.Println("1 func (t *Trie) CommitTo(db DatabaseWriter) (root common.Hash, err error)")
+
 	if err != nil {
 		return (common.Hash{}), err
 	}
 	t.root = cached
 	t.cachegen++
+	//DJ fmt.Println("2 func (t *Trie) CommitTo(db DatabaseWriter) (root common.Hash, err error)")
+
 	return common.BytesToHash(hash.(hashNode)), nil
 }
 
